@@ -655,22 +655,7 @@ class BaseSchema(base.SchemaABC):
                 field_names = self.set_class(self.opts.fields) & self.set_class(self.only)
             else:
                 field_names = self.set_class(self.only)
-            schema_fields = set()  # Keep track of nested fields.
-            for field_name in self.only:
-                # Shift off the leftmost field name of the property chain.
-                field_chain = field_name.split(str('.'))
-                key = field_chain[0]
-                child_chain = str('.').join(field_chain[1:])
-                try:
-                    field_obj = self.__get_declared_field(key, obj)
-                except (AttributeError, KeyError):
-                    continue  # Don't include invalid fields.
-                if child_chain and hasattr(field_obj, 'schema'):
-                    # Override schema.only on nested fields.
-                    if key not in schema_fields:
-                        field_obj.schema.only = ()
-                        schema_fields.add(key)
-                    field_obj.schema.only += (child_chain,)
+            self.__update_nested_fields(self.only, 'only', obj)
         elif self.opts.fields:
             # Return fields specified in fields option
             field_names = self.set_class(self.opts.fields)
@@ -687,31 +672,36 @@ class BaseSchema(base.SchemaABC):
         # If "exclude" option or param is specified, remove those fields
         excludes = set(self.opts.exclude) | set(self.exclude)
         if excludes:
-            direct_excludes = set()
-            schema_fields = set()  # Keep track of nested fields.
-            for field_name in excludes:
-                # Shift off the leftmost field name of the property chain.
-                field_chain = field_name.split(str('.'))
-                key = field_chain[0]
-                child_chain = str('.').join(field_chain[1:])
-                try:
-                    field_obj = self.__get_declared_field(key, obj)
-                except (AttributeError, KeyError):
-                    continue  # Don't exclude invalid fields.
-                if child_chain and hasattr(field_obj, 'schema'):
-                    # Override schema.only on nested fields.
-                    if key not in schema_fields:
-                        field_obj.schema.exclude = ()
-                        schema_fields.add(key)
-                    field_obj.schema.exclude += (child_chain,)
-                else:
-                    direct_excludes.add(key)
-            field_names = field_names - direct_excludes
+            nested_fields, fields = self.__update_nested_fields(excludes, 'exclude', obj)
+            field_names = field_names - fields
         ret = self.__filter_fields(field_names, obj, many=many)
         # Set parents
         self.__set_field_attrs(ret)
         self.fields = ret
         return self.fields
+
+    def __update_nested_fields(self, field_names, schema_option, obj):
+        nested_fields = set()
+        fields = set()
+        for field_name in field_names:
+            # Shift off the leftmost field name of the property chain.
+            field_chain = field_name.split(str('.'))
+            key = field_chain[0]
+            child_chain = str('.').join(field_chain[1:])
+            try:
+                field_obj = self.__get_declared_field(key, obj)
+            except (AttributeError, KeyError):
+                continue  # Ignore invalid fields.
+            if child_chain and hasattr(field_obj, 'schema'):
+                # Override the schema option on nested fields.
+                if key not in nested_fields:
+                    setattr(field_obj.schema, schema_option, ())
+                    nested_fields.add(key)
+                attr = getattr(field_obj.schema, schema_option)
+                setattr(field_obj.schema, schema_option, attr + (child_chain,))
+            else:
+                fields.add(key)
+        return nested_fields, fields
 
     def on_bind_field(self, field_name, field_obj):
         """Hook to modify a field when it is bound to the `Schema`. No-op by default."""
