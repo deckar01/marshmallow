@@ -650,11 +650,13 @@ class BaseSchema(base.SchemaABC):
     def _update_fields(self, obj=None, many=False):
         """Update fields based on the passed in object."""
         if self.only:
+            only = (field_name.split(str('.'))[0] for field_name in self.only)
+            only = self.set_class(only)
             # Return only fields specified in only option
             if self.opts.fields:
-                field_names = self.set_class(self.opts.fields) & self.set_class(self.only)
+                field_names = self.set_class(self.opts.fields) & self.set_class(only)
             else:
-                field_names = self.set_class(self.only)
+                field_names = self.set_class(only)
             self.__update_nested_fields(self.only, 'only', obj)
         elif self.opts.fields:
             # Return fields specified in fields option
@@ -665,9 +667,6 @@ class BaseSchema(base.SchemaABC):
                             self.set_class(self.opts.additional))
         else:
             field_names = self.set_class(self.declared_fields.keys())
-
-        field_names = (field_name.split(str('.'))[0] for field_name in field_names)
-        field_names = self.set_class(field_names)
 
         # If "exclude" option or param is specified, remove those fields
         excludes = set(self.opts.exclude) | set(self.exclude)
