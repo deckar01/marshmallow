@@ -687,7 +687,26 @@ class BaseSchema(base.SchemaABC):
         # If "exclude" option or param is specified, remove those fields
         excludes = set(self.opts.exclude) | set(self.exclude)
         if excludes:
-            field_names = field_names - excludes
+            direct_excludes = set()
+            schema_fields = set()  # Keep track of nested fields.
+            for field_name in excludes:
+                # Shift off the leftmost field name of the property chain.
+                field_chain = field_name.split(str('.'))
+                key = field_chain[0]
+                child_chain = str('.').join(field_chain[1:])
+                try:
+                    field_obj = self.__get_declared_field(key, obj)
+                except (AttributeError, KeyError):
+                    continue  # Don't exclude invalid fields.
+                if child_chain and hasattr(field_obj, 'schema'):
+                    # Override schema.only on nested fields.
+                    if key not in schema_fields:
+                        field_obj.schema.exclude = ()
+                        schema_fields.add(key)
+                    field_obj.schema.exclude += (child_chain,)
+                else:
+                    direct_excludes.add(key)
+            field_names = field_names - direct_excludes
         ret = self.__filter_fields(field_names, obj, many=many)
         # Set parents
         self.__set_field_attrs(ret)
