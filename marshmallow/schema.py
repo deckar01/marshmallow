@@ -655,6 +655,22 @@ class BaseSchema(base.SchemaABC):
                 field_names = self.set_class(self.opts.fields) & self.set_class(self.only)
             else:
                 field_names = self.set_class(self.only)
+            schema_fields = set()  # Keep track of nested fields.
+            for field_name in self.only:
+                # Shift off the leftmost field name of the property chain.
+                field_chain = field_name.split(str('.'))
+                key = field_chain[0]
+                child_chain = str('.').join(field_chain[1:])
+                try:
+                    field_obj = self.__get_declared_field(key, obj)
+                except (AttributeError, KeyError):
+                    continue  # Don't include invalid fields.
+                if child_chain and hasattr(field_obj, 'schema'):
+                    # Override schema.only on nested fields.
+                    if key not in schema_fields:
+                        field_obj.schema.only = ()
+                        schema_fields.add(key)
+                    field_obj.schema.only += (child_chain,)
         elif self.opts.fields:
             # Return fields specified in fields option
             field_names = self.set_class(self.opts.fields)
@@ -664,6 +680,9 @@ class BaseSchema(base.SchemaABC):
                             self.set_class(self.opts.additional))
         else:
             field_names = self.set_class(self.declared_fields.keys())
+
+        field_names = (field_name.split(str('.'))[0] for field_name in field_names)
+        field_names = self.set_class(field_names)
 
         # If "exclude" option or param is specified, remove those fields
         excludes = set(self.opts.exclude) | set(self.exclude)
@@ -727,26 +746,29 @@ class BaseSchema(base.SchemaABC):
             obj = obj_prototype
         ret = self.dict_class()
         for key in field_names:
-            if key in self.declared_fields:
-                ret[key] = self.declared_fields[key]
-            else:  # Implicit field creation (class Meta 'fields' or 'additional')
-                if obj:
-                    attribute_type = None
-                    try:
-                        if isinstance(obj, Mapping):
-                            attribute_type = type(obj[key])
-                        else:
-                            attribute_type = type(getattr(obj, key))
-                    except (AttributeError, KeyError) as err:
-                        err_type = type(err)
-                        raise err_type(
-                            '"{0}" is not a valid field for {1}.'.format(key, obj))
-                    field_obj = self.TYPE_MAPPING.get(attribute_type, fields.Field)()
-                else:  # Object is None
-                    field_obj = fields.Field()
-                # map key -> field (default to Raw)
-                ret[key] = field_obj
+            ret[key] = self.__get_declared_field(key, obj)
         return ret
+
+    def __get_declared_field(self, key, obj):
+        if key in self.declared_fields:
+            return self.declared_fields[key]
+        else:  # Implicit field creation (class Meta 'fields' or 'additional')
+            if obj:
+                attribute_type = None
+                try:
+                    if isinstance(obj, Mapping):
+                        attribute_type = type(obj[key])
+                    else:
+                        attribute_type = type(getattr(obj, key))
+                except (AttributeError, KeyError) as err:
+                    err_type = type(err)
+                    raise err_type(
+                        '"{0}" is not a valid field for {1}.'.format(key, obj))
+                field_obj = self.TYPE_MAPPING.get(attribute_type, fields.Field)()
+            else:  # Object is None
+                field_obj = fields.Field()
+            # map key -> field (default to Raw)
+            return field_obj
 
     def _invoke_dump_processors(self, tag_name, data, many, original_data=None):
         # The pass_many post-dump processors may do things like add an envelope, so
