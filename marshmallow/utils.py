@@ -334,16 +334,31 @@ def callable_or_raise(obj):
     return obj
 
 
+def _inspect_args(call):
+    if hasattr(inspect, 'signature'):
+        # Python 3.0 deprecated getargspec in favor of signature
+        # Normalize the ValueView of Parameters to a list of strings
+        return [
+            str(value) for value in inspect.signature(call).parameters.values()
+        ]
+    else:
+        args = inspect.getargspec(call).args
+        # Remove the bound argument to match the signature implementation
+        if hasattr(call, '__self__'):
+            return args[1:]
+        return args
+
+
 def get_func_args(func):
     """Given a callable, return a tuple of argument names. Handles
     `functools.partial` objects and class-based callables.
     """
     if isinstance(func, functools.partial):
-        return inspect.getargspec(func.func).args
+        return _inspect_args(func.func)
     if inspect.isfunction(func) or inspect.ismethod(func):
-        return inspect.getargspec(func).args
+        return _inspect_args(func)
     # Callable class
-    return inspect.getargspec(func.__call__).args
+    return _inspect_args(func.__call__)
 
 
 def if_none(value, default):
