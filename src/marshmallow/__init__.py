@@ -1,4 +1,4 @@
-from marshmallow.schema import Schema, SchemaOpts
+from marshmallow.schema import Schema, Schema2, SchemaOpts
 
 from . import fields
 from marshmallow.decorators import (
@@ -20,6 +20,7 @@ __all__ = [
     "INCLUDE",
     "RAISE",
     "Schema",
+    "Schema2",
     "SchemaOpts",
     "fields",
     "validates",

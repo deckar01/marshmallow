@@ -8,7 +8,8 @@ import gc
 import timeit
 import datetime
 
-from marshmallow import Schema, Schema2, fields, ValidationError, post_dump
+import toastedmarshmallow
+from marshmallow import Schema, fields, ValidationError, post_dump
 
 
 # Custom validator
@@ -17,7 +18,7 @@ def must_not_be_blank(data):
         raise ValidationError("Data not provided.")
 
 
-class AuthorSchema(Schema2):
+class AuthorSchema(Schema):
     id = fields.Int(dump_only=True)
     first = fields.Str()
     last = fields.Str()
@@ -82,6 +83,7 @@ class Quote:
 
 def run_timeit(quotes, iterations, repeat, profile=False):
     quotes_schema = QuoteSchema()
+    quotes_schema.jit = toastedmarshmallow.Jit
     if profile:
         profile = cProfile.Profile()
         profile.enable()
@@ -97,7 +99,7 @@ def run_timeit(quotes, iterations, repeat, profile=False):
     )
     if profile:
         profile.disable()
-        profile.dump_stats("marshmallow.pprof")
+        profile.dump_stats("toastedmarshmallow.pprof")
 
     usec = best * 1e6 / iterations
     return usec
