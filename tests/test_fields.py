@@ -390,13 +390,13 @@ class TestListNested:
             children = fields.List(fields.Nested(Child))
 
         schema = Family(**{param: ["children.name"]})
-        assert getattr(schema.fields["children"].inner.schema, param) == {"name"}
+        assert getattr(schema.fields["children"].inner.schema, param) == ["name"]
 
     @pytest.mark.parametrize(
         ("param", "expected_attribute", "expected_dump"),
         (
-            ("only", {"name"}, {"children": [{"name": "Lily"}]}),
-            ("exclude", {"name", "surname", "age"}, {"children": [{}]}),
+            ("only", ["name"], {"children": [{"name": "Lily"}]}),
+            ("exclude", ['name', 'age', 'surname'], {"children": [{}]}),
         ),
     )
     def test_list_nested_class_only_and_exclude_merged_with_nested(
@@ -436,8 +436,8 @@ class TestListNested:
     @pytest.mark.parametrize(
         ("param", "expected_attribute", "expected_dump"),
         (
-            ("only", {"name"}, {"children": [{"name": "Lily"}]}),
-            ("exclude", {"name", "surname", "age"}, {"children": [{}]}),
+            ("only", ["name"], {"children": [{"name": "Lily"}]}),
+            ("exclude", ["name", "age", "surname"], {"children": [{}]}),
         ),
     )
     def test_list_nested_instance_only_and_exclude_merged_with_nested(
@@ -479,8 +479,8 @@ class TestListNested:
     @pytest.mark.parametrize(
         ("param", "expected_attribute", "expected_dump"),
         (
-            ("only", {"name"}, {"children": [{"name": "Lily"}]}),
-            ("exclude", {"name", "surname", "age"}, {"children": [{}]}),
+            ("only", ["name"], {"children": [{"name": "Lily"}]}),
+            ("exclude", ["name", "age", "surname"], {"children": [{}]}),
         ),
     )
     def test_list_nested_lambda_only_and_exclude_merged_with_nested(
@@ -546,12 +546,9 @@ class TestTupleNested:
             children = fields.Tuple((fields.Nested(Child), fields.Nested(Child)))
 
         schema = Family(**{param: ["children.name"]})
-        assert getattr(schema.fields["children"].tuple_fields[0].schema, param) == {
-            "name"
-        }
-        assert getattr(schema.fields["children"].tuple_fields[1].schema, param) == {
-            "name"
-        }
+        tuple_fields = schema.fields["children"].tuple_fields
+        assert getattr(tuple_fields[0].schema, param) == ["name"]
+        assert getattr(tuple_fields[1].schema, param) == ["name"]
 
     def test_tuple_nested_partial_propagated_to_nested(self):
         class Child(Schema):
@@ -595,11 +592,11 @@ class TestDictNested:
             children = fields.Dict(values=fields.Nested(Child))
 
         schema = Family(**{param: ["children.name"]})
-        assert getattr(schema.fields["children"].value_field.schema, param) == {"name"}
+        assert getattr(schema.fields["children"].value_field.schema, param) == ["name"]
 
     @pytest.mark.parametrize(
         ("param", "expected"),
-        (("only", {"name"}), ("exclude", {"name", "surname", "age"})),
+        (("only", ["name"]), ("exclude", ["name", "age", "surname"])),
     )
     def test_dict_nested_only_and_exclude_merged_with_nested(self, param, expected):
         class Child(Schema):

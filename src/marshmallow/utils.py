@@ -331,3 +331,25 @@ def timedelta_to_microseconds(value: dt.timedelta) -> int:
     https://github.com/python/cpython/blob/bb3e0c240bc60fe08d332ff5955d54197f79751c/Lib/datetime.py#L665-L667  # noqa: B950
     """
     return (value.days * (24 * 3600) + value.seconds) * 1000000 + value.microseconds
+
+
+def unique(iterable):
+    registry = set()
+    for item in iterable:
+        if item not in registry:
+            registry.add(item)
+            yield item
+
+
+def common(a, b):
+    keep = set(b)
+    for item in a:
+        if item in keep:
+            yield item
+
+
+def exclude(a, b):
+    remove = set(b)
+    for item in a:
+        if item not in remove:
+            yield item

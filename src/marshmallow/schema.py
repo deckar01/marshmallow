@@ -2,6 +2,7 @@
 from collections import defaultdict, OrderedDict
 from collections.abc import Mapping
 from functools import lru_cache
+from itertools import chain
 import datetime as dt
 import uuid
 import decimal
@@ -14,7 +15,6 @@ import warnings
 from marshmallow import base, fields as ma_fields, class_registry, types
 from marshmallow.error_store import ErrorStore
 from marshmallow.exceptions import ValidationError, StringNotCollectionError
-from marshmallow.orderedset import OrderedSet
 from marshmallow.decorators import (
     POST_DUMP,
     POST_LOAD,
@@ -32,6 +32,9 @@ from marshmallow.utils import (
     get_value,
     is_collection,
     is_instance_or_subclass,
+    unique,
+    common,
+    exclude,
 )
 from marshmallow.warnings import RemovedInMarshmallow4Warning
 
@@ -382,10 +385,10 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         self.declared_fields = copy.deepcopy(self._declared_fields)
         self.many = many
         self.only = only
-        self.exclude = set(self.opts.exclude) | set(exclude)
+        self.exclude = list(unique(chain(self.opts.exclude, exclude)))
         self.ordered = self.opts.ordered
-        self.load_only = set(load_only) or set(self.opts.load_only)
-        self.dump_only = set(dump_only) or set(self.opts.dump_only)
+        self.load_only = list(unique(load_only)) or list(unique(self.opts.load_only))
+        self.dump_only = list(unique(dump_only)) or list(unique(self.opts.dump_only))
         self.partial = partial
         self.unknown = unknown or self.opts.unknown
         self.context = context or {}
@@ -410,10 +413,6 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     @property
     def dict_class(self) -> type:
         return OrderedDict if self.ordered else dict
-
-    @property
-    def set_class(self) -> type:
-        return OrderedSet if self.ordered else set
 
     @classmethod
     def from_dict(
@@ -913,14 +912,12 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
             # Apply the only option to nested fields.
             self.__apply_nested_option("only", self.only, "intersection")
             # Remove the child field names from the only option.
-            self.only = self.set_class([field.split(".", 1)[0] for field in self.only])
+            self.only = list(unique(field.split(".", 1)[0] for field in self.only))
         if self.exclude:
             # Apply the exclude option to nested fields.
             self.__apply_nested_option("exclude", self.exclude, "union")
             # Remove the parent field names from the exclude option.
-            self.exclude = self.set_class(
-                [field for field in self.exclude if "." not in field]
-            )
+            self.exclude = list(unique(field for field in self.exclude if "." not in field))
 
     def __apply_nested_option(self, option_name, field_names, set_operation) -> None:
         """Apply nested options to nested fields"""
@@ -932,42 +929,42 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
             nested_options[parent].append(nested_names)
         # Apply the nested field options.
         for key, options in iter(nested_options.items()):
-            new_options = self.set_class(options)
+            new_options = options
             original_options = getattr(self.declared_fields[key], option_name, ())
             if original_options:
                 if set_operation == "union":
-                    new_options |= self.set_class(original_options)
+                    new_options = chain(new_options, original_options)
                 if set_operation == "intersection":
-                    new_options &= self.set_class(original_options)
-            setattr(self.declared_fields[key], option_name, new_options)
+                    new_options = common(new_options, original_options)
+            setattr(self.declared_fields[key], option_name, list(unique(new_options)))
 
     def _init_fields(self) -> None:
         """Update self.fields, self.load_fields, and self.dump_fields based on schema options.
         This method is private API.
         """
         if self.opts.fields:
-            available_field_names = self.set_class(self.opts.fields)
+            available_field_names = self.opts.fields
         else:
-            available_field_names = self.set_class(self.declared_fields.keys())
+            available_field_names = list(self.declared_fields.keys())
             if self.opts.additional:
-                available_field_names |= self.set_class(self.opts.additional)
+                available_field_names += self.opts.additional
 
-        invalid_fields = self.set_class()
+        invalid_fields = []
 
         if self.only is not None:
             # Return only fields specified in only option
-            field_names = self.set_class(self.only)
+            field_names = list(unique(self.only))
 
-            invalid_fields |= field_names - available_field_names
+            invalid_fields += exclude(field_names, available_field_names)
         else:
-            field_names = available_field_names
+            field_names = unique(available_field_names)
 
         # If "exclude" option or param is specified, remove those fields.
         if self.exclude:
             # Note that this isn't available_field_names, since we want to
             # apply "only" for the actual calculation.
-            field_names = field_names - self.exclude
-            invalid_fields |= self.exclude - available_field_names
+            field_names = exclude(field_names, self.exclude)
+            invalid_fields += exclude(self.exclude, available_field_names)
 
         if invalid_fields:
             message = f"Invalid fields for {self}: {invalid_fields}."

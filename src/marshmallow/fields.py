@@ -11,6 +11,7 @@ import math
 import typing
 import warnings
 from collections.abc import Mapping as _Mapping
+from itertools import chain
 
 from marshmallow import validate, utils, class_registry, types
 from marshmallow.base import FieldABC, SchemaABC
@@ -19,6 +20,8 @@ from marshmallow.utils import (
     missing as missing_,
     resolve_field_instance,
     is_aware,
+    unique,
+    common,
 )
 from marshmallow.exceptions import (
     ValidationError,
@@ -574,16 +577,15 @@ class Nested(Field):
                 self._schema = copy.copy(nested)
                 self._schema.context.update(context)
                 # Respect only and exclude passed from parent and re-initialize fields
-                set_class = self._schema.set_class
                 if self.only is not None:
                     if self._schema.only is not None:
                         original = self._schema.only
                     else:  # only=None -> all fields
                         original = self._schema.fields.keys()
-                    self._schema.only = set_class(self.only) & set_class(original)
+                    self._schema.only = list(unique(common(self.only, original)))
                 if self.exclude:
                     original = self._schema.exclude
-                    self._schema.exclude = set_class(self.exclude) | set_class(original)
+                    self._schema.exclude = list(unique(chain(self.exclude, original)))
                 self._schema._init_fields()
             else:
                 if isinstance(nested, type) and issubclass(nested, SchemaABC):
