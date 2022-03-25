@@ -77,12 +77,15 @@ class MarshmallowHook:
     )  # type: Optional[Dict[Union[Tuple[str, bool], str], Any]]
 
 
-def validates(field_name: str) -> Callable[..., Any]:
-    """Register a field validator.
+def validates(field_name: str, *field_names: str) -> Callable[..., Any]:
+    """Register field validators."""
 
-    :param str field_name: Name of the field that the method validates.
-    """
-    return set_hook(None, VALIDATES, field_name=field_name)
+    def hook(fn: Callable[..., Any]) -> Callable[..., Any]:
+        for name in (field_name,) + field_names:
+            set_hook(fn, VALIDATES, field_name=name)
+        return fn
+
+    return hook
 
 
 def validates_schema(
