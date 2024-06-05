@@ -146,7 +146,7 @@ class SchemaMeta(ABCMeta):
         super().__init__(name, bases, attrs)
         if name and cls.opts.register:
             class_registry.register(name, cls)
-        cls._hooks = cls.resolve_hooks()
+        cls.resolve_hooks()
 
     def resolve_hooks(cls) -> dict[types.Tag, list[str]]:
         """Add in the decorated processors
@@ -156,7 +156,8 @@ class SchemaMeta(ABCMeta):
         """
         mro = inspect.getmro(cls)
 
-        hooks = defaultdict(list)  # type: typing.Dict[types.Tag, typing.List[str]]
+        cls._one_hooks = defaultdict(list)  # type: typing.Dict[types.Tag, typing.List[str]]
+        cls._many_hooks = defaultdict(list)  # type: typing.Dict[types.Tag, typing.List[str]]
 
         for attr_name in dir(cls):
             # Need to look up the actual descriptor, not whatever might be
@@ -176,16 +177,24 @@ class SchemaMeta(ABCMeta):
                 continue
 
             try:
-                hook_config = attr.__marshmallow_hook__
+                hook_config = attr.__one_marshmallow_hook__
             except AttributeError:
                 pass
             else:
-                for key in hook_config.keys():
+                for tag in hook_config.keys():
                     # Use name here so we can get the bound method later, in
                     # case the processor was a descriptor or something.
-                    hooks[key].append(attr_name)
+                    cls._one_hooks[tag].append(attr_name)
 
-        return hooks
+            try:
+                hook_config = attr.__many_marshmallow_hook__
+            except AttributeError:
+                pass
+            else:
+                for tag in hook_config.keys():
+                    # Use name here so we can get the bound method later, in
+                    # case the processor was a descriptor or something.
+                    cls._many_hooks[tag].append(attr_name)
 
 
 class SchemaOpts:
@@ -319,7 +328,8 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     # These get set by SchemaMeta
     opts = None  # type: SchemaOpts
     _declared_fields = {}  # type: typing.Dict[str, ma_fields.Field]
-    _hooks = {}  # type: typing.Dict[types.Tag, typing.List[str]]
+    _one_hooks = {}  # type: typing.Dict[types.Tag, typing.List[str]]
+    _many_hooks = {}  # type: typing.Dict[types.Tag, typing.List[str]]
 
     class Meta:
         """Options object for a Schema.
@@ -1056,7 +1066,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         self.on_bind_field(field_name, field_obj)
 
     def _has_processors(self, tag) -> bool:
-        return bool(self._hooks[(tag, True)] or self._hooks[(tag, False)])
+        return tag in self._one_hooks or tag in self._many_hooks
 
     def _invoke_dump_processors(
         self, tag: str, data, *, many: bool, original_data=None
@@ -1102,9 +1112,11 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         return data
 
     def _invoke_field_validators(self, *, error_store: ErrorStore, data, many: bool):
-        for attr_name in self._hooks[VALIDATES]:
+        hooks = self._many_hooks if many else self._one_hooks
+        for attr_name in hooks[VALIDATES]:
             validator = getattr(self, attr_name)
-            validator_kwargs = validator.__marshmallow_hook__[VALIDATES]
+            hook = validator.__many_marshmallow_hook__ if many else validator.__one_marshmallow_hook__
+            validator_kwargs = hook[VALIDATES]
             field_name = validator_kwargs["field_name"]
 
             try:
@@ -1159,11 +1171,11 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         partial: bool | types.StrSequenceOrSet | None,
         field_errors: bool = False,
     ):
-        for attr_name in self._hooks[(VALIDATES_SCHEMA, pass_many)]:
+        hooks = self._many_hooks if pass_many else self._one_hooks
+        for attr_name in hooks.get(VALIDATES_SCHEMA, ()):
             validator = getattr(self, attr_name)
-            validator_kwargs = validator.__marshmallow_hook__[
-                (VALIDATES_SCHEMA, pass_many)
-            ]
+            hook = validator.__many_marshmallow_hook__ if pass_many else validator.__one_marshmallow_hook__
+            validator_kwargs = hook[VALIDATES_SCHEMA]
             if field_errors and validator_kwargs["skip_on_field_errors"]:
                 continue
             pass_original = validator_kwargs.get("pass_original", False)
@@ -1201,12 +1213,13 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         original_data=None,
         **kwargs,
     ):
-        key = (tag, pass_many)
-        for attr_name in self._hooks[key]:
+        hooks = self._many_hooks if pass_many else self._one_hooks
+        for attr_name in hooks.get(tag, ()):
             # This will be a bound method.
             processor = getattr(self, attr_name)
 
-            processor_kwargs = processor.__marshmallow_hook__[key]
+            hook = processor.__many_marshmallow_hook__ if pass_many else processor.__one_marshmallow_hook__
+            processor_kwargs = hook[tag]
             pass_original = processor_kwargs.get("pass_original", False)
 
             if many and not pass_many:

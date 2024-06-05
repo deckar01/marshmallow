@@ -79,7 +79,8 @@ VALIDATES_SCHEMA = "validates_schema"
 
 
 class MarshmallowHook:
-    __marshmallow_hook__: dict[tuple[str, bool] | str, Any] | None = None
+    __one_marshmallow_hook__ = None
+    __many_marshmallow_hook__ = None
 
 
 def validates(field_name: str) -> Callable[..., Any]:
@@ -117,7 +118,8 @@ def validates_schema(
     """
     return set_hook(
         fn,
-        (VALIDATES_SCHEMA, pass_many),
+        VALIDATES_SCHEMA,
+        pass_many,
         pass_original=pass_original,
         skip_on_field_errors=skip_on_field_errors,
     )
@@ -136,7 +138,7 @@ def pre_dump(
     .. versionchanged:: 3.0.0
         ``many`` is always passed as a keyword arguments to the decorated method.
     """
-    return set_hook(fn, (PRE_DUMP, pass_many))
+    return set_hook(fn, PRE_DUMP, pass_many)
 
 
 def post_dump(
@@ -157,7 +159,7 @@ def post_dump(
     .. versionchanged:: 3.0.0
         ``many`` is always passed as a keyword arguments to the decorated method.
     """
-    return set_hook(fn, (POST_DUMP, pass_many), pass_original=pass_original)
+    return set_hook(fn, POST_DUMP, pass_many, pass_original=pass_original)
 
 
 def pre_load(
@@ -174,7 +176,7 @@ def pre_load(
         ``partial`` and ``many`` are always passed as keyword arguments to
         the decorated method.
     """
-    return set_hook(fn, (PRE_LOAD, pass_many))
+    return set_hook(fn, PRE_LOAD, pass_many)
 
 
 def post_load(
@@ -196,11 +198,11 @@ def post_load(
         ``partial`` and ``many`` are always passed as keyword arguments to
         the decorated method.
     """
-    return set_hook(fn, (POST_LOAD, pass_many), pass_original=pass_original)
+    return set_hook(fn, POST_LOAD, pass_many, pass_original=pass_original)
 
 
 def set_hook(
-    fn: Callable[..., Any] | None, key: tuple[str, bool] | str, **kwargs: Any
+    fn: Callable[..., Any] | None, tag: str, pass_many: bool = None, **kwargs: Any
 ) -> Callable[..., Any]:
     """Mark decorated function as a hook to be picked up later.
     You should not need to use this method directly.
@@ -214,18 +216,27 @@ def set_hook(
     """
     # Allow using this as either a decorator or a decorator factory.
     if fn is None:
-        return functools.partial(set_hook, key=key, **kwargs)
+        return functools.partial(set_hook, tag=tag, pass_many=pass_many, **kwargs)
 
-    # Set a __marshmallow_hook__ attribute instead of wrapping in some class,
+    # Set a __*_marshmallow_hook__ attribute instead of wrapping in some class,
     # because I still want this to end up as a normal (unbound) method.
     function = cast(MarshmallowHook, fn)
-    try:
-        hook_config = function.__marshmallow_hook__
-    except AttributeError:
-        function.__marshmallow_hook__ = hook_config = {}
-    # Also save the kwargs for the tagged function on
-    # __marshmallow_hook__, keyed by (<tag>, <pass_many>)
-    if hook_config is not None:
-        hook_config[key] = kwargs
+    match pass_many:
+        case None:
+            hook_names = ('__many_marshmallow_hook__', '__one_marshmallow_hook__')
+        case True:
+            hook_names = ('__many_marshmallow_hook__',)
+        case False:
+            hook_names = ('__one_marshmallow_hook__',)
+
+    for hook_name in hook_names:
+        try:
+            hook_config = getattr(function, hook_name)
+        except AttributeError:
+            hook_config = {}
+            setattr(function, hook_name, hook_config)
+        # Also save the kwargs for the tagged function on
+        if hook_config is not None:
+            hook_config[tag] = kwargs
 
     return fn
