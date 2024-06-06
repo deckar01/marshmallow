@@ -80,7 +80,7 @@ VALIDATES_SCHEMA = "validates_schema"
 
 
 class MarshmallowHook:
-    __marshmallow_hook__: dict[str, dict[bool, Any]] | None = None
+    __marshmallow_hook__: dict[str, list[tuple[bool, Any]]] | None = None
 
 
 def validates(field_name: str) -> Callable[..., Any]:
@@ -224,10 +224,10 @@ def set_hook(
     try:
         hook_config = function.__marshmallow_hook__
     except AttributeError:
-        function.__marshmallow_hook__ = hook_config = defaultdict(dict)
+        function.__marshmallow_hook__ = hook_config = defaultdict(list)
     # Also save the kwargs for the tagged function on
     # __marshmallow_hook__, keyed by [<tag>][<many>]
     if hook_config is not None:
-        hook_config[tag][many] = kwargs
+        hook_config[tag].append((many, kwargs))
 
     return fn

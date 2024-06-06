@@ -148,7 +148,7 @@ class SchemaMeta(ABCMeta):
             class_registry.register(name, cls)
         cls._hooks = cls.resolve_hooks()
 
-    def resolve_hooks(cls) -> dict[str, dict[bool, list[str]]]:
+    def resolve_hooks(cls) -> dict[str, list[tuple[str, bool, dict]]]:
         """Add in the decorated processors
 
         By doing this after constructing the class, we let standard inheritance
@@ -156,7 +156,7 @@ class SchemaMeta(ABCMeta):
         """
         mro = inspect.getmro(cls)
 
-        hooks = defaultdict(lambda: defaultdict(list))  # type: typing.Dict[str, typing.Dict[bool, typing.List[str]]]
+        hooks = defaultdict(list)  # type: typing.Dict[str, typing.List[typing.Tuple[str, bool, dict]]]
 
         for attr_name in dir(cls):
             # Need to look up the actual descriptor, not whatever might be
@@ -176,15 +176,16 @@ class SchemaMeta(ABCMeta):
                 continue
 
             try:
-                hook_config = attr.__marshmallow_hook__
+                hook_config = attr.__marshmallow_hook__  # type: typing.Dict[str, typing.List[typing.Tuple[bool, dict]]]
             except AttributeError:
                 pass
             else:
                 for tag, config in hook_config.items():
-                    for many in config.keys():
-                        # Use name here so we can get the bound method later, in
-                        # case the processor was a descriptor or something.
-                        hooks[tag][many].append(attr_name)
+                    # Use name here so we can get the bound method later, in
+                    # case the processor was a descriptor or something.
+                    hooks[tag].extend(
+                        (attr_name, many, kwargs) for many, kwargs in config
+                    )
 
         return hooks
 
@@ -320,7 +321,7 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
     # These get set by SchemaMeta
     opts = None  # type: SchemaOpts
     _declared_fields = {}  # type: typing.Dict[str, ma_fields.Field]
-    _hooks = {}  # type: typing.Dict[str, typing.Dict[bool, typing.List[str]]]
+    _hooks = {}  # type: typing.Dict[str, typing.List[typing.Tuple[str, bool, dict]]]
 
     class Meta:
         """Options object for a Schema.
@@ -1100,9 +1101,8 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         return data
 
     def _invoke_field_validators(self, *, error_store: ErrorStore, data, many: bool):
-        for attr_name in self._hooks[VALIDATES][False]:
+        for attr_name, _, validator_kwargs in self._hooks[VALIDATES]:
             validator = getattr(self, attr_name)
-            validator_kwargs = validator.__marshmallow_hook__[VALIDATES][False]
             field_name = validator_kwargs["field_name"]
 
             try:
@@ -1157,11 +1157,10 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         partial: bool | types.StrSequenceOrSet | None,
         field_errors: bool = False,
     ):
-        for attr_name in self._hooks[VALIDATES_SCHEMA][pass_many]:
+        for attr_name, hook_many, validator_kwargs in self._hooks[VALIDATES_SCHEMA]:
+            if hook_many != pass_many:
+                continue
             validator = getattr(self, attr_name)
-            validator_kwargs = validator.__marshmallow_hook__[VALIDATES_SCHEMA][
-                pass_many
-            ]
             if field_errors and validator_kwargs["skip_on_field_errors"]:
                 continue
             pass_original = validator_kwargs.get("pass_original", False)
@@ -1199,11 +1198,11 @@ class Schema(base.SchemaABC, metaclass=SchemaMeta):
         original_data=None,
         **kwargs,
     ):
-        for attr_name in self._hooks[tag][pass_many]:
+        for attr_name, hook_many, processor_kwargs in self._hooks[tag]:
+            if hook_many != pass_many:
+                continue
             # This will be a bound method.
             processor = getattr(self, attr_name)
-
-            processor_kwargs = processor.__marshmallow_hook__[tag][pass_many]
             pass_original = processor_kwargs.get("pass_original", False)
 
             if many and not pass_many:
