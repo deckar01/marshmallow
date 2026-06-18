@@ -122,7 +122,7 @@ jobs:
                   )
                   stats = benchmark.get("stats") or {}
                   mean = stats.get("mean")
-                  if name and isinstance(mean, int | float):
+                  if name and isinstance(mean, (int, float)):
                       results[name] = float(mean)
               return results
 
