@@ -1,0 +1,194 @@
+name: benchmark-pulse-vs-upstream
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/benchmark-pulse-vs-upstream.yml
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: CPython 3.12
+            python-version: "3.12"
+            interpreter: cpython-3.12
+          - name: PyPy 3.10
+            python-version: pypy3.10
+            interpreter: pypy-3.10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install benchmark dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install pytest pytest-benchmark
+      - name: Clone repositories
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/marshmallow-code/marshmallow.git upstream
+          git clone --depth 1 https://github.com/AstekGroup/pulse-marshmallow.git pulse
+      - name: Discover benchmark directory
+        id: benchmark-path
+        shell: bash
+        run: |
+          set -euo pipefail
+          for candidate in tests/benchmarks tests/benchmark; do
+            if [[ -d "upstream/${candidate}" ]]; then
+              echo "relative-path=${candidate}" >>"$GITHUB_OUTPUT"
+              echo "Using benchmark directory: upstream/${candidate}"
+              exit 0
+            fi
+          done
+
+          echo "Neither upstream/tests/benchmarks nor upstream/tests/benchmark exists." >&2
+          if [[ -d upstream/tests ]]; then
+            echo "Available upstream/tests directories:" >&2
+            find upstream/tests -maxdepth 2 -type d | sort >&2
+          else
+            echo "upstream/tests does not exist." >&2
+          fi
+          exit 1
+      - name: Run upstream and pulse benchmarks
+        shell: bash
+        env:
+          BENCHMARK_REL_PATH: ${{ steps.benchmark-path.outputs.relative-path }}
+          INTERPRETER: ${{ matrix.interpreter }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d "pulse/${BENCHMARK_REL_PATH}" ]]; then
+            echo "Expected matching benchmark directory pulse/${BENCHMARK_REL_PATH} was not found." >&2
+            if [[ -d pulse/tests ]]; then
+              echo "Available pulse/tests directories:" >&2
+              find pulse/tests -maxdepth 2 -type d | sort >&2
+            else
+              echo "pulse/tests does not exist." >&2
+            fi
+            exit 1
+          fi
+
+          (
+            cd upstream
+            python -m pip install -e .
+            python -m pytest "$BENCHMARK_REL_PATH" --benchmark-json "../upstream-${INTERPRETER}.json"
+          )
+
+          (
+            cd pulse
+            python -m pip install -e .
+            python -m pytest "$BENCHMARK_REL_PATH" --benchmark-json "../pulse-${INTERPRETER}.json"
+          )
+      - name: Compare benchmark results
+        shell: bash
+        env:
+          INTERPRETER: ${{ matrix.interpreter }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          interpreter = os.environ["INTERPRETER"]
+          upstream_path = Path(f"upstream-{interpreter}.json")
+          pulse_path = Path(f"pulse-{interpreter}.json")
+          report_path = Path(f"comparison-{interpreter}.md")
+
+
+          def load_results(path: Path) -> dict[str, float]:
+              data = json.loads(path.read_text())
+              results: dict[str, float] = {}
+              for benchmark in data.get("benchmarks", []):
+                  name = (
+                      benchmark.get("fullname")
+                      or benchmark.get("fullnodeid")
+                      or benchmark.get("name")
+                  )
+                  stats = benchmark.get("stats") or {}
+                  mean = stats.get("mean")
+                  if name and isinstance(mean, int | float):
+                      results[name] = float(mean)
+              return results
+
+
+          def format_mean(value: float | None) -> str:
+              return "—" if value is None else f"{value:.6f}"
+
+
+          def format_name(value: str) -> str:
+              return value.replace("|", "\\|")
+
+
+          upstream = load_results(upstream_path)
+          pulse = load_results(pulse_path)
+          ratios: list[float] = []
+
+          lines = [
+              f"## {interpreter}",
+              "",
+              "| benchmark name | upstream mean (s) | pulse mean (s) | speedup |",
+              "| --- | ---: | ---: | ---: |",
+          ]
+
+          all_names = sorted(set(upstream) | set(pulse))
+          if not all_names:
+              lines.append("| _no benchmarks found_ | — | — | — |")
+
+          for name in all_names:
+              upstream_mean = upstream.get(name)
+              pulse_mean = pulse.get(name)
+              speedup = "—"
+              if (
+                  upstream_mean is not None
+                  and pulse_mean is not None
+                  and upstream_mean > 0
+                  and pulse_mean > 0
+              ):
+                  ratio = upstream_mean / pulse_mean
+                  ratios.append(ratio)
+                  speedup = f"{ratio:.3f}x"
+              lines.append(
+                  "| `{name}` | {upstream_mean} | {pulse_mean} | {speedup} |".format(
+                      name=format_name(name),
+                      upstream_mean=format_mean(upstream_mean),
+                      pulse_mean=format_mean(pulse_mean),
+                      speedup=speedup,
+                  )
+              )
+
+          if ratios:
+              geo_mean = math.exp(sum(math.log(ratio) for ratio in ratios) / len(ratios))
+              lines.extend(["", f"Geometric mean speedup: **{geo_mean:.3f}x**"])
+          else:
+              lines.extend(
+                  ["", "Geometric mean speedup: not available (no positive benchmark pairs)."]
+              )
+
+          report_path.write_text("\n".join(lines) + "\n")
+          print(report_path.read_text(), end="")
+          PY
+          cat "comparison-${INTERPRETER}.md" >>"$GITHUB_STEP_SUMMARY"
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: benchmark-comparison-${{ matrix.interpreter }}
+          path: |
+            upstream-${{ matrix.interpreter }}.json
+            pulse-${{ matrix.interpreter }}.json
+            comparison-${{ matrix.interpreter }}.md
